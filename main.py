@@ -1,43 +1,25 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, BackgroundTasks
 import pika
+import concurrent.futures
+from fibonacci_utils import send_fibonacci_to_queue
 
 app = FastAPI()
 
 
-def fibonacci(n):
-    if n <= 0:
-        return []
-    elif n == 1:
-        return [0]
-    elif n == 2:
-        return [0, 1]
-
-    fib_series = [0, 1]
-    for i in range(2, n):
-        fib_series.append(fib_series[i - 1] + fib_series[i - 2])
-
-    return fib_series
-
-
-@app.get("/fibo")
-async def send_fibonacci_to_queue(n: int):
+def get_channel():
     connection = pika.BlockingConnection(
         pika.ConnectionParameters('localhost'))  # Change this to your RabbitMQ server address
-    channel = connection.channel()
-    channel.queue_declare(queue='fibonacci')
-
-    fib_series = fibonacci(n)
-
-    for num in fib_series:
-        channel.basic_publish(exchange='', routing_key='fibonacci', body=str(num))
-        print(f"Sent: {num}")
-
-    connection.close()
-
-    return {"message": "Fibonacci series sent to queue"}
+    return connection.channel()
 
 
-if __name__ == "__main__":
-    import uvicorn
+def run_in_thread(func, *args, **kwargs):
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        return executor.submit(func, *args, **kwargs).result()
 
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+
+@app.post("/calculate-fibonacci/")
+async def calculate_fibonacci(background_tasks: BackgroundTasks, n: int):
+    channel = get_channel()
+    background_tasks.add_task(run_in_thread, send_fibonacci_to_queue, channel, n)
+
+    return {"message": f"Fibonacci series calculation enqueued for {n} numbers"}
